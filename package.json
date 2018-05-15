@@ -1,0 +1,13 @@
+{
+  "name": "keepalive",
+  "version": "0.0.1",
+  "description": "A simple game emulating a cloud app deployment",
+  "main": "main.js",
+  "repository": "",
+  "author": "Jeff Cave <jefferey.cave@gmail.com>",
+  "dependencies": {
+  },
+  "devDependencies": {
+    "moment": "^2.22.1"
+  }
+}
