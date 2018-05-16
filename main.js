@@ -12,11 +12,14 @@ AWS for Python
   http://boto3.readthedocs.io/en/latest/
 
 */
+(async function(){
+
 'use strict';
 
 
 const fs = require('fs');
 const readline = require('readline');
+const sqlite = require('sqlite3');
 const zlib = require('zlib');
 const path = require('path');
 const moment = require('moment');
@@ -50,29 +53,29 @@ const REGIONS = {
  * active, and what the closest datacenter shoudl be.
  */
 class PopRegion{
-
 	constructor(boundaries){
-		this.bound = boundaries;
-		let lat = (this.bound['n'] + this.bound['s']) / 2;
-		let lng = (this.bound['e'] + this.bound['w']) / 2;
-		this.center = {"lat": lat, "lng": lng};
-		this.population = 0;
-		this.area = 0;
-		this.pop_ratio = 0.0;
-		this.customers = 0;
+		let self = this;
+		self.bound = boundaries;
+		let lat = (self.bound['n'] + self.bound['s']) / 2;
+		let lng = (self.bound['e'] + self.bound['w']) / 2;
+		self.center = {"lat": lat, "lng": lng};
+		self.population = 0;
+		self.area = 0;
+		self.pop_ratio = 0.0;
+		self.customers = 0;
 	}
 
 	contains(lat, lng){
-		if (this.bound['n'] <= lat){
+		if (this.bound.n <= lat){
 			return false;
 		}
-		else if (this.bound['s'] > lat){
+		else if (this.bound.s > lat){
 			return false;
 		}
-		else if (this.bound['e'] <= lng){
+		else if (this.bound.e <= lng){
 			return false;
 		}
-		else if (this.bound['w'] > lng){
+		else if (this.bound.w > lng){
 			return false;
 		}
 		return true;
@@ -88,10 +91,11 @@ class PopRegion{
 	}
 
 	calc_active(sym_time){
-		let local_time = moment(sym_time).add('hours',this.center.lng);
+		let local_time = moment(sym_time).add(this.center.lng,'hours');
 		let active = Helpers.random.triangular(0,this.customers-Math.abs(12-local_time.hours()),this.customers);
 		return active;
 	}
+	
 }
 
 
@@ -99,13 +103,13 @@ class PopRegion{
  * The entire customer base of planet earth.
  */
 class PopComplete{
-
+	
 	constructor(customers, region_count){
 		process.stderr.write("Creating the planet ... \r");
 		this.gameStart = Date.now();
 		this.population = 0;
 		this.Customers = customers;
-
+	
 		this.regions = [];
 		this.region_idx = [];
 		this.size_lat = 180 / region_count["lat"];
@@ -119,7 +123,7 @@ class PopComplete{
 				};
 				bound.e = bound.w + this.size_lng;
 				bound.n = bound.s + this.size_lat;
-
+	
 				let region = new PopRegion(bound);
 				this.region_idx[lat].push(region);
 				this.regions.push(region);
@@ -128,7 +132,6 @@ class PopComplete{
 			}
 		}
 		process.stderr.write(`Created the planet. \n`);
-
 	}
 	
 	initialize(){
@@ -139,46 +142,65 @@ class PopComplete{
 		// This number should be based off of data from NASA regarding
 		// population density
 		let self = this;
-		readline
-			.createInterface({
-				input: fs.createReadStream('gpwv4-2015.csv.gz').pipe(zlib.createGunzip())
-			})
-			.on('line', (line) => {
-				line = line.split(',');
-				if (!header){
-					header = line;
-				}
-				else{
-					line[2] = parseFloat(line[2]);
-					line[3] = parseFloat(line[3]);
-					let lng = parseInt((line[2] + 180)/self.size_lng,10);
-					let lat = parseInt((line[3] +  90)/self.size_lat,10);
-					let region = self.region_idx[lat][lng];
-					region.add_data(line);
-					self.population = self.population + region.population;
-				}
-				if (recs === 0){
-					let pop = parseInt(Math.floor(this.population / 1000000),10);
-					process.stderr.write("Populating Planet... {{population}}M               \r".replace('{{population}}',pop));
-				}
-				recs = (recs + 1) % 20;
-			})
-			.on('close', ()=>{
-				let customer = 0.0;
-				self.population = parseInt(Math.round(self.population),10);
-				let pop = parseInt(Math.floor(self.population / 1000000),10);
-				for(let region in self.regions){
-					region = region[1];
-					region.population = parseInt(Math.round(region.population),10);
-					region.pop_ratio = region.population / self.population;
-					region.customers = Math.floor(region.pop_ratio * self.customers);
-					customer = customer + region.customers;
-					process.stderr.write("Populating Planet... {2:,d} of {0:,d} ({1:.1f}%)\r".format(pop,(customer/self.population*100),Math.floor(customer)));
-				}
-				process.stderr.write("Populating Planet:                     \n");
-			});
+
+		let reader = new Promise((resolve,reject)=>{
+			readline
+				.createInterface({
+					input: fs.createReadStream('gpwv4-2015.csv.gz').pipe(zlib.createGunzip())
+				})
+				.on('line', async (line) => {
+					try{
+						line = line.split(',');
+					}
+					catch(e){
+						console.error('FAILED:'+line);
+						return;
+					}
+					if (!header){
+						header = line;
+					}
+					else{
+						line[2] = parseFloat(line[2]);
+						line[3] = parseFloat(line[3]);
+						let lng = parseInt((line[2] + 180)/self.size_lng,10);
+						let lat = parseInt((line[3] +  90)/self.size_lat,10);
+						let year = parseInt(line[5],10);
+						let pop = parseInt(line[6],10);
+						let area = parseFloat(line[7]);
+						
+						if(year !== 2015){
+							return;
+						}
+						
+						let region = self.region_idx[lat][lng];
+						region.add_data(line);
+						self.population = self.population + region.population;
+					}
+					if (recs === 0){
+						let pop = parseInt(Math.floor(this.population / 1000000),10);
+						process.stderr.write("Populating Planet... {{population}} million               \r".replace('{{population}}',pop));
+					}
+					recs = (recs + 1) % 99;
+				})
+				.on('close', async ()=>{
+					let customer = 0.0;
+					self.population = parseInt(Math.round(self.population),10);
+					let pop = parseInt(Math.floor(self.population / 1000000),10);
+					self.regions.forEach(function(region){
+						region.population = parseInt(Math.round(region.population),10);
+						region.pop_ratio = region.population / self.population;
+						region.customers = Math.floor(region.pop_ratio * self.customers);
+						customer = customer + region.customers;
+						process.stderr.write("Populating Planet... {2:,d} of {0:,d} ({1:.1f}%)\r".format(pop,(customer/self.population*100),Math.floor(customer)));
+					});
+					process.stderr.write("Populating Planet:                     \n");
+					resolve(self);
+				});
+			
+		});
+		return reader;
 	}
-	
+
 	calc_active(sym_time){
 		let active = 0;
 		for(let r in this.regions){
@@ -288,29 +310,18 @@ const Helpers = {
  * the high level game.
  */
 class Main{
-
+	
 	constructor(config){
-		this.planet = new PopComplete(config["customers"], config["planetregions"]);
-		this.planet.initialize();
-		this.now = this.planet.gameTime;
-		this.inc = config["timeIncrement"];
-
-		this.gamedir = config["path"];
-		if (!path.isAbsolute(this.gamedir)){
-			this.gamedir = path.join('.', this.gamedir);
+		let self = this;
+		self.planet = new PopComplete(config["customers"], config["planetregions"]);
+		self.now = self.planet.gameTime;
+		self.inc = config["timeIncrement"];
+	
+		self.gamedir = config["path"];
+		if (!path.isAbsolute(self.gamedir)){
+			self.gamedir = path.join('.', self.gamedir);
 		}
-		try{
-			fs.statSync(this.gamedir);
-		}
-		catch(e){
-			if(e.code === 'ENOENT'){
-				fs.mkdirSync(this.gamedir);
-			}
-			else{
-				throw e;
-			}
-		}
-		this.state = 'stop';
+		self.state = 'stop';
 	}
 	
 	run(){
@@ -344,12 +355,30 @@ class Main{
 
 	parse_args(){
 	}
+	
+	async initialize(){
+		return Promise.all([
+			this.planet.initialize(),
+			new Promise((resolve,reject)=>{
+				fs.stat(this.gamedir,(err,stat)=>{
+					if(err){
+						reject(err);
+					}
+					else{
+						resolve(stat);
+					}
+				});
+			})
+		]);
+	}
 }
 
 
 console.log("Executing 'Keep Alive' ");
 const main = new Main(CONFIG);
 main.parse_args();
+await main.initialize();
 main.run();
 console.log("Done.");
 
+})();

@@ -5,9 +5,9 @@
   "main": "main.js",
   "repository": "",
   "author": "Jeff Cave <jefferey.cave@gmail.com>",
-  "dependencies": {
-  },
+  "dependencies": {},
   "devDependencies": {
-    "moment": "^2.22.1"
+    "moment": "^2.22.1",
+    "sqlite3": "^4.0.0"
   }
 }
