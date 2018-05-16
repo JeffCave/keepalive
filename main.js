@@ -19,7 +19,7 @@ AWS for Python
 
 const fs = require('fs');
 const readline = require('readline');
-const sqlite = require('sqlite3');
+const sqlite = require('better-sqlite3');
 const zlib = require('zlib');
 const path = require('path');
 const moment = require('moment');
@@ -28,8 +28,8 @@ const CONFIG = {
 	"path": "game",
 	"customers": 10,
 	"planetregions": {"lat": 10, "lng": 10},
-	// amount of time in minutes that should pass in the
-	// model, for every ms of real time.
+	// amount of time in hours that should pass in the
+	// model, for every minute of real time.
 	"timeIncrement": 1
 };
 
@@ -134,71 +134,44 @@ class PopComplete{
 		process.stderr.write(`Created the planet. \n`);
 	}
 	
-	initialize(){
-		let header = null;
+	async initialize(){
 		let recs = 0;
 		
 		// Calculate the number of customers we have in a given region
 		// This number should be based off of data from NASA regarding
 		// population density
 		let self = this;
-
-		let reader = new Promise((resolve,reject)=>{
-			readline
-				.createInterface({
-					input: fs.createReadStream('gpwv4-2015.csv.gz').pipe(zlib.createGunzip())
-				})
-				.on('line', async (line) => {
-					try{
-						line = line.split(',');
-					}
-					catch(e){
-						console.error('FAILED:'+line);
-						return;
-					}
-					if (!header){
-						header = line;
-					}
-					else{
-						line[2] = parseFloat(line[2]);
-						line[3] = parseFloat(line[3]);
-						let lng = parseInt((line[2] + 180)/self.size_lng,10);
-						let lat = parseInt((line[3] +  90)/self.size_lat,10);
-						let year = parseInt(line[5],10);
-						let pop = parseInt(line[6],10);
-						let area = parseFloat(line[7]);
-						
-						if(year !== 2015){
-							return;
-						}
-						
-						let region = self.region_idx[lat][lng];
-						region.add_data(line);
-						self.population = self.population + region.population;
-					}
-					if (recs === 0){
-						let pop = parseInt(Math.floor(this.population / 1000000),10);
-						process.stderr.write("Populating Planet... {{population}} million               \r".replace('{{population}}',pop));
-					}
-					recs = (recs + 1) % 99;
-				})
-				.on('close', async ()=>{
-					let customer = 0.0;
-					self.population = parseInt(Math.round(self.population),10);
-					let pop = parseInt(Math.floor(self.population / 1000000),10);
-					self.regions.forEach(function(region){
-						region.population = parseInt(Math.round(region.population),10);
-						region.pop_ratio = region.population / self.population;
-						region.customers = Math.floor(region.pop_ratio * self.customers);
-						customer = customer + region.customers;
-						process.stderr.write("Populating Planet... {2:,d} of {0:,d} ({1:.1f}%)\r".format(pop,(customer/self.population*100),Math.floor(customer)));
-					});
-					process.stderr.write("Populating Planet:                     \n");
-					resolve(self);
-				});
+		let db = new sqlite('gpwv.sqlite');
+		let query = db.prepare([
+						'select ifnull(sum(population),0) as pop ',
+						'from   planet ',
+						'where  lat >= :s and lat < :n and ',
+						'       lon >= :w and lon < :e '
+					].join('\n'));
+		let displayFreq = parseInt(this.regions.length/100,1);
+		this.regions.forEach(function(region){
+			let row = query.get(region.bound);
+			region.population = row.pop;
+			self.population += region.population;
+			if (recs === 0){
+				let pop = parseInt(Math.floor(self.population / 1000000),10);
+				process.stderr.write("Populating Planet... {{population}} million               \r".replace('{{population}}',pop));
+			}
+			recs = (recs + 1) % displayFreq;
 			
 		});
-		return reader;
+		db.close();
+		let customer = 0.0;
+		self.population = parseInt(Math.round(self.population),10);
+		let pop = parseInt(Math.floor(self.population / 1000000),10);
+		self.regions.forEach(function(region){
+			region.population = parseInt(Math.round(region.population),10);
+			region.pop_ratio = region.population / self.population;
+			region.customers = Math.floor(region.pop_ratio * self.customers);
+			customer = customer + region.customers;
+		});
+		process.stderr.write("Populated Planet. {{population}} million               \n".replace('{{population}}',pop));
+		return this;
 	}
 
 	calc_active(sym_time){

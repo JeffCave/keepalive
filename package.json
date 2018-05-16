@@ -8,6 +8,6 @@
   "dependencies": {},
   "devDependencies": {
     "moment": "^2.22.1",
-    "sqlite3": "^4.0.0"
+    "better-sqlite3": "^4.1.0",
   }
 }
