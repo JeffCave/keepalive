@@ -18,9 +18,7 @@ AWS for Python
 
 
 const fs = require('fs');
-const readline = require('readline');
 const sqlite = require('better-sqlite3');
-const zlib = require('zlib');
 const path = require('path');
 const moment = require('moment');
 
@@ -28,9 +26,8 @@ const CONFIG = {
 	"path": "game",
 	"customers": 10,
 	"planetregions": {"lat": 10, "lng": 10},
-	// amount of time in hours that should pass in the
-	// model, for every minute of real time.
-	"timeIncrement": 1
+	// speed at which game times should accelerate beyond real-time.
+	"timeRate": 61
 };
 
 
@@ -53,7 +50,7 @@ const REGIONS = {
  * active, and what the closest datacenter shoudl be.
  */
 class PopRegion{
-	constructor(boundaries){
+	constructor(boundaries,isHome=false){
 		let self = this;
 		self.bound = boundaries;
 		let lat = (self.bound['n'] + self.bound['s']) / 2;
@@ -63,6 +60,7 @@ class PopRegion{
 		self.area = 0;
 		self.pop_ratio = 0.0;
 		self.customers = 0;
+		this.isHome = isHome;
 	}
 
 	contains(lat, lng){
@@ -89,10 +87,61 @@ class PopRegion{
 			this.population = this.population + pop;
 		}
 	}
+	
+	get timezone(){
+		let zone = this.center.lng;
+		// add 180 degrees (span is negative to positive)
+		zone += 180; 
+		// find the ratio of a circle
+		zone /= 360;
+		// convert to hours
+		zone *= 24;
+		return zone;
+	}
+	
+	/**
+	 * Calculates the number of active people
+	 * 
+	 * Based on the game time, it will calculate a random number of people that
+	 * are to be considered active and about. This is primarily based on time
+	 * of day.
+	 */
+	calcActive(sym_time){
+		let active = {
+			people: 0,
+			customers:0
+		};
+		if(this.population === 0){
+			return active;
+		}
+		let timezone = this.timezone;
+		let localRotationalTime = moment(sym_time)
+			.add(timezone,'hours')
+			.year(0)
+			.month(0)
+			.day(0)
+			.valueOf()
+			;
+		localRotationalTime /= (24 * 60 * 60 * 1000);
+		let lower = 1;
+		let upper = this.population;
+		let mode = localRotationalTime * this.population;
+		
+		active.people = Helpers.random.rotating(lower,upper,mode);
+		active.people = Math.floor(active.people);
+		if(active.people < 1){
+			active.people = 1;
+		}
 
-	calc_active(sym_time){
-		let local_time = moment(sym_time).add(this.center.lng,'hours');
-		let active = Helpers.random.triangular(0,this.customers-Math.abs(12-local_time.hours()),this.customers);
+		active.customers = active.people / this.population;
+		active.customers *= this.customers;
+		active.customers = Math.floor(active.customers);
+		// if this is our home region, we always have one customer, because
+		// Mom loves us.
+		if(this.isHome && active.customers < 1){
+			active.customers = 1;
+		}
+
 		return active;
 	}
 	
@@ -108,8 +157,8 @@ class PopComplete{
 		process.stderr.write("Creating the planet ... \r");
 		this.gameStart = Date.now();
 		this.population = 0;
-		this.Customers = customers;
-	
+		this.customers = customers;
+
 		this.regions = [];
 		this.region_idx = [];
 		this.size_lat = 180 / region_count["lat"];
@@ -123,7 +172,7 @@ class PopComplete{
 				};
 				bound.e = bound.w + this.size_lng;
 				bound.n = bound.s + this.size_lat;
-	
+
 				let region = new PopRegion(bound);
 				this.region_idx[lat].push(region);
 				this.regions.push(region);
@@ -131,7 +180,8 @@ class PopComplete{
 				process.stdout.write(`Creating the planet [${lat},${lng}] \r`);
 			}
 		}
-		process.stderr.write(`Created the planet. \n`);
+		
+		process.stderr.write('Created the planet. \n');
 	}
 	
 	async initialize(){
@@ -148,7 +198,7 @@ class PopComplete{
 						'where  lat >= :s and lat < :n and ',
 						'       lon >= :w and lon < :e '
 					].join('\n'));
-		let displayFreq = parseInt(this.regions.length/100,1);
+		let displayFreq = parseInt(this.regions.length/100,10);
 		this.regions.forEach(function(region){
 			let row = query.get(region.bound);
 			region.population = row.pop;
@@ -161,26 +211,38 @@ class PopComplete{
 			
 		});
 		db.close();
-		let customer = 0.0;
-		self.population = parseInt(Math.round(self.population),10);
+		self.population = Math.round(self.population);
 		let pop = parseInt(Math.floor(self.population / 1000000),10);
 		self.regions.forEach(function(region){
-			region.population = parseInt(Math.round(region.population),10);
+			region.population = Math.round(region.population);
 			region.pop_ratio = region.population / self.population;
 			region.customers = Math.floor(region.pop_ratio * self.customers);
-			customer = customer + region.customers;
 		});
 		process.stderr.write("Populated Planet. {{population}} million               \n".replace('{{population}}',pop));
+		
+		let habitable = this.regions.filter(function(d){
+			return d.population > 0;
+		});
+		this.homeRegion = Math.floor(Math.random() * habitable.length);
+		this.homeRegion = habitable[this.homeRegion];
+		this.homeRegion.isHome = true;
+		
+		this.gameStart = Date.now();
 		return this;
 	}
 
-	calc_active(sym_time){
-		let active = 0;
-		for(let r in this.regions){
-			let region = this.regions[r];
-			region.calc_active(sym_time);
-		}
+	calcActive(sym_time = this.gameTime){
+		let active = this.regions.reduce(function(a,region){
+			let active = region.calcActive(sym_time);
+			a.people += active.people;
+			a.customers += active.customers;
+			return a;
+		},{people:0,customers:0});
 		return active;
+	}
+	
+	get active(){
+		return this.calcActive();
 	}
 	
 	get gameTime(){
@@ -188,10 +250,8 @@ class PopComplete{
 		let time = Date.now();
 		// determine how much real time has passed since the game started
 		time = time - this.gameStart;
-		// We are interested in the real time as a function of seconds
-		time = time*1000;
 		// Apply the time factor as specified in the configuration
-		time = time*CONFIG.timeIncrement;
+		time = time*CONFIG.timeRate;
 		// Add the time back on to the start of the game
 		time = time + this.gameStart;
 		// convert to a Date object
@@ -310,17 +370,21 @@ class Main{
 				self.runner = null;
 				return;
 			}
-			let active = self.planet.calc_active(self.now);
-			process.stdout.write(
-				"[{{time}}] {{active}}\r"
-					.replace('{{time}}',self.now.toISOString())
-					.replace('{{active}}', ('          ' + active.toFixed(0)).substr(-10))
-			);
-
 			// Update the simulation time
-			self.now = self.planet.gameTime;
-
-		},this.inc);
+			let now = self.planet.gameTime;
+			let active = self.planet.calcActive(now);
+			active.peopleRatio = active.people / self.planet.population;
+			active.customerRatio = active.customers / self.planet.population;
+			
+			
+			process.stdout.write(
+				"[{{time}}] {{active}} of {{pop}} ({{pct}}%) \r"
+					.replace('{{time}}',now.toISOString().substring(0,19))
+					.replace('{{active}}', active.customers.toFixed(0))
+					.replace('{{pop}}', self.planet.population.toFixed(0))
+					.replace('{{pct}}', (active.customerRatio*100).toFixed(1))
+			);
+		},500);
 	}
 
 	help(){
@@ -352,6 +416,5 @@ const main = new Main(CONFIG);
 main.parse_args();
 await main.initialize();
 main.run();
-console.log("Done.");
 
 })();
