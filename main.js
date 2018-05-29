@@ -12,6 +12,8 @@ AWS for Python
   http://boto3.readthedocs.io/en/latest/
 
 */
+require('./lib/utils.js');
+
 (async function(){
 
 'use strict';
@@ -27,24 +29,30 @@ const CONFIG = {
 	"customers": 10,
 	"planetregions": {"lat": 10, "lng": 10},
 	// speed at which game times should accelerate beyond real-time.
-	"timeRate": 61
+	"timeRate": 61,
+	"income":0.01,
+	"cost":1
 };
 
 
-const REGIONS = {
-	'Europe': {
-		"datacenter": "Dublin, Ireland",
-		"customers": 0,
+const DATACENTERS = {
+	"Europe": {
+		"city": "Dublin, Ireland",
+		"coords": [53.348429, -6.282792]
 	},
-	'Asia': {
-		"datacenter": "Hong Kong, China",
-		"customers": 0
+	"Asia": {
+		"city": "Hong Kong, China",
+		"coords": [22.348683, 114.144128],
 	},
+	"North America": {
+		"city": "New York, USA",
+		"coords": [40.748343, -73.985474],
+	}
 };
 
 
 
-/** 
+/**
  * Represents a gridded population group within our map. This allows
  * us to estimate how many people within a region are becomming
  * active, and what the closest datacenter shoudl be.
@@ -53,9 +61,13 @@ class PopRegion{
 	constructor(boundaries,isHome=false){
 		let self = this;
 		self.bound = boundaries;
-		let lat = (self.bound['n'] + self.bound['s']) / 2;
-		let lng = (self.bound['e'] + self.bound['w']) / 2;
-		self.center = {"lat": lat, "lng": lng};
+
+		let lat = (this.bound['n'] + this.bound['s']) / 2;
+		let lng = (this.bound['e'] + this.bound['w']) / 2;
+		this.center = [lng,lat];
+		this.lat = lat;
+		this.lng = lng;
+
 		self.population = 0;
 		self.area = 0;
 		self.pop_ratio = 0.0;
@@ -64,6 +76,10 @@ class PopRegion{
 	}
 
 	contains(lat, lng){
+		if(Array.isArray(lat)){
+			lng = lat[1];
+			lat = lat[0];
+		}
 		if (this.bound.n <= lat){
 			return false;
 		}
@@ -87,21 +103,21 @@ class PopRegion{
 			this.population = this.population + pop;
 		}
 	}
-	
+
 	get timezone(){
 		let zone = this.center.lng;
 		// add 180 degrees (span is negative to positive)
-		zone += 180; 
+		zone += 180;
 		// find the ratio of a circle
 		zone /= 360;
 		// convert to hours
 		zone *= 24;
 		return zone;
 	}
-	
+
 	/**
 	 * Calculates the number of active people
-	 * 
+	 *
 	 * Based on the game time, it will calculate a random number of people that
 	 * are to be considered active and about. This is primarily based on time
 	 * of day.
@@ -126,7 +142,7 @@ class PopRegion{
 		let lower = 1;
 		let upper = this.population;
 		let mode = localRotationalTime * this.population;
-		
+
 		active.people = Helpers.random.rotating(lower,upper,mode);
 		active.people = Math.floor(active.people);
 		if(active.people < 1){
@@ -144,7 +160,7 @@ class PopRegion{
 
 		return active;
 	}
-	
+
 }
 
 
@@ -152,7 +168,7 @@ class PopRegion{
  * The entire customer base of planet earth.
  */
 class PopComplete{
-	
+
 	constructor(customers, region_count){
 		process.stderr.write("Creating the planet ... \r");
 		this.gameStart = Date.now();
@@ -176,17 +192,16 @@ class PopComplete{
 				let region = new PopRegion(bound);
 				this.region_idx[lat].push(region);
 				this.regions.push(region);
-				
+
 				process.stdout.write(`Creating the planet [${lat},${lng}] \r`);
 			}
 		}
-		
-		process.stderr.write('Created the planet. \n');
-	}
-	
-	async initialize(){
+
+		process.stderr.write('Created the planet.                   \n');
+
+
 		let recs = 0;
-		
+
 		// Calculate the number of customers we have in a given region
 		// This number should be based off of data from NASA regarding
 		// population density
@@ -198,35 +213,35 @@ class PopComplete{
 						'where  lat >= :s and lat < :n and ',
 						'       lon >= :w and lon < :e '
 					].join('\n'));
-		let displayFreq = parseInt(this.regions.length/100,10);
-		this.regions.forEach(function(region){
+		let displayFreq = Math.floor(this.regions.length/100);
+		this.regions.forEach((region)=>{
 			let row = query.get(region.bound);
 			region.population = row.pop;
 			self.population += region.population;
 			if (recs === 0){
-				let pop = parseInt(Math.floor(self.population / 1000000),10);
+				let pop = Math.floor(self.population / 1000000);
 				process.stderr.write("Populating Planet... {{population}} million               \r".replace('{{population}}',pop));
 			}
 			recs = (recs + 1) % displayFreq;
-			
+
 		});
 		db.close();
 		self.population = Math.round(self.population);
-		let pop = parseInt(Math.floor(self.population / 1000000),10);
+		let pop = Math.floor(self.population / 1000000);
 		self.regions.forEach(function(region){
 			region.population = Math.round(region.population);
 			region.pop_ratio = region.population / self.population;
 			region.customers = Math.floor(region.pop_ratio * self.customers);
 		});
 		process.stderr.write("Populated Planet. {{population}} million               \n".replace('{{population}}',pop));
-		
+
 		let habitable = this.regions.filter(function(d){
 			return d.population > 0;
 		});
 		this.homeRegion = Math.floor(Math.random() * habitable.length);
 		this.homeRegion = habitable[this.homeRegion];
 		this.homeRegion.isHome = true;
-		
+
 		this.gameStart = Date.now();
 		return this;
 	}
@@ -240,11 +255,11 @@ class PopComplete{
 		},{people:0,customers:0});
 		return active;
 	}
-	
+
 	get active(){
 		return this.calcActive();
 	}
-	
+
 	get gameTime(){
 		// Get the current real time
 		let time = Date.now();
@@ -258,22 +273,81 @@ class PopComplete{
 		time = new Date(time);
 		return time;
 	}
-	
+
 }
 
 /**
  *
  */
-class Host{
-	constructor(config){
+class Providers{
+	constructor(planet){
+		this.planet = planet;
+
+		// lookup our standard datacenters
+		// these ones will always exist because Amazon is a giant company
+		this.datacenters = Object.entries(DATACENTERS).map((d)=>{
+			let center = JSON.clone(d[1]);
+			center.name = d[0];
+			return center;
+		});
+		// create "Mom" hosting. Will always exist because ... mom
+		this.datacenters.unshift({
+			"name": "Mom's Basement",
+			"coords": JSON.clone(this.planet.homeRegion.center),
+		});
+		// these centers will always exist
+		this.FIXEDCENTERS = this.datacenters.length;
+
+		// lookup some reasonable places to create new datacenters in case
+		// we want to dynamically create some later
+		let db = new sqlite('gpwv.sqlite');
+		let sql = 'select country as "name", lon, lat from planet order by (population/area) desc limit  100';
+		db.prepare(sql).all().forEach((row)=>{
+				this.datacenters.push({
+					"name": row.name,
+					"coords":[row.lon,row.lat]
+
+				});
+			});
+		db.close();
+
+		// now that we have all of our centers, initialize the values
+		// generally, the data centers are mom/pop shops
+		this.datacenters.forEach(center=>{
+			center.capacity = 1000;
+			center.max = 100;
+			center.cost = CONFIG.cost;
+			center.active = false;
+		});
+
+		// the first few are really big companies
+		this.datacenters.slice(0,this.FIXEDCENTERS).forEach((center)=>{
+			// there servers can handle volume
+			center.capacity = 1000;
+			// there is no end to their servers
+			center.max = Number.MAX_SAFE_INTEGER;
+			center.cost = CONFIG.cost;
+			center.active = true;
+		});
+
+		// home is a very special case
+		this.home = this.datacenters[0];
+		// its capacity should be just enough that you can almost acquire the
+		// next tier
+		this.home.capacity = 100;
+		this.max = 1;
+		this.cost = 0;
+		this.active = true;
 	}
+
 }
 
+
 const Helpers = {
-	
+
 	random: {
 		/**
-		 * Calculates the 
+		 * Calculates the
 		 */
 		rotating:function(low=0, high=1, mode=null, randFunc=Math.random){
 			if(mode === null){
@@ -281,7 +355,7 @@ const Helpers = {
 			}
 			if(mode > high) mode = high;
 			if(mode < low ) mode = low;
-			
+
 			let range = high-low;
 			let mRatio = (mode-low) / range;
 			let displacement = mRatio - 0.5 + 1;
@@ -289,9 +363,9 @@ const Helpers = {
 			let rand = Helpers.random.triangular(0,1,0.5,randFunc);
 			rand += displacement;
 			rand -= Math.floor(rand);
-			
+
 			rand = range*rand + low;
-			
+
 			return rand;
 		},
 		triangular:function(low=0, high=1, mode=null, randFunc=Math.random){
@@ -300,7 +374,7 @@ const Helpers = {
 			}
 			if(mode > high) mode = high;
 			if(mode < low ) mode = low;
-			
+
 			let nums = Array(3).fill(null).map(function(){return randFunc();});
 			let rand = nums.reduce((a,d)=>{return a+d;},0) / nums.length;
 
@@ -316,7 +390,7 @@ const Helpers = {
 			rand *=2;
 			rand = (rand * range) + low;
 
-			
+
 			return rand;
 		},
 		testRand:function(rand = null, mode=0.5 , sampleSize = 20,runs=10000){
@@ -339,24 +413,27 @@ const Helpers = {
 
 
 /**
- * Main application class. Mostly static methods that are used to run 
+ * Main application class. Mostly static methods that are used to run
  * the high level game.
  */
 class Main{
-	
+
 	constructor(config){
 		let self = this;
-		self.planet = new PopComplete(config["customers"], config["planetregions"]);
-		self.now = self.planet.gameTime;
-		self.inc = config["timeIncrement"];
-	
+
 		self.gamedir = config["path"];
 		if (!path.isAbsolute(self.gamedir)){
 			self.gamedir = path.join('.', self.gamedir);
 		}
-		self.state = 'stop';
+
+		this.planet = new PopComplete(config["customers"], config["planetregions"]);
+		this.providers = new Providers(this.planet);
+		this.now = self.planet.gameTime;
+		this.inc = config["timeIncrement"];
+
+		this.state = 'stop';
 	}
-	
+
 	run(){
 		if(this.runner){
 			console.warn("already running");
@@ -364,7 +441,7 @@ class Main{
 		}
 		let self = this;
 		self.state = "run";
-		this.runner = setInterval(function(){
+		this.runner = setInterval(()=>{
 			if(self.state !== 'run'){
 				clearInterval(self.runner);
 				self.runner = null;
@@ -375,8 +452,9 @@ class Main{
 			let active = self.planet.calcActive(now);
 			active.peopleRatio = active.people / self.planet.population;
 			active.customerRatio = active.customers / self.planet.population;
-			
-			
+
+
+
 			process.stdout.write(
 				"[{{time}}] {{active}} of {{pop}} ({{pct}}%) \r"
 					.replace('{{time}}',now.toISOString().substring(0,19))
@@ -392,10 +470,9 @@ class Main{
 
 	parse_args(){
 	}
-	
+
 	async initialize(){
-		return Promise.all([
-			this.planet.initialize(),
+		Promise.all([
 			new Promise((resolve,reject)=>{
 				fs.stat(this.gamedir,(err,stat)=>{
 					if(err){
