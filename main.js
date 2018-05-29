@@ -170,7 +170,7 @@ class PopRegion{
 class PopComplete{
 
 	constructor(customers, region_count){
-		process.stderr.write("Creating the planet ... \r");
+		console.write.err("Creating the planet ... \r");
 		this.gameStart = Date.now();
 		this.population = 0;
 		this.customers = customers;
@@ -193,11 +193,11 @@ class PopComplete{
 				this.region_idx[lat].push(region);
 				this.regions.push(region);
 
-				process.stdout.write(`Creating the planet [${lat},${lng}] \r`);
+				console.write.err(`Creating the planet [${lat},${lng}] \r`);
 			}
 		}
 
-		process.stderr.write('Created the planet.                   \n');
+		console.write.err('Created the planet. \n');
 
 
 		let recs = 0;
@@ -220,7 +220,7 @@ class PopComplete{
 			self.population += region.population;
 			if (recs === 0){
 				let pop = Math.floor(self.population / 1000000);
-				process.stderr.write("Populating Planet... {{population}} million               \r".replace('{{population}}',pop));
+				console.write.err("Populating Planet... {{population}} million \r".replace('{{population}}',pop));
 			}
 			recs = (recs + 1) % displayFreq;
 
@@ -233,7 +233,7 @@ class PopComplete{
 			region.pop_ratio = region.population / self.population;
 			region.customers = Math.floor(region.pop_ratio * self.customers);
 		});
-		process.stderr.write("Populated Planet. {{population}} million               \n".replace('{{population}}',pop));
+		console.write.err("Populated Planet. {{population}} million \n".replace('{{population}}',pop));
 
 		let habitable = this.regions.filter(function(d){
 			return d.population > 0;
@@ -455,7 +455,7 @@ class Main{
 
 
 
-			process.stdout.write(
+			console.write.out(
 				"[{{time}}] {{active}} of {{pop}} ({{pct}}%) \r"
 					.replace('{{time}}',now.toISOString().substring(0,19))
 					.replace('{{active}}', active.customers.toFixed(0))
