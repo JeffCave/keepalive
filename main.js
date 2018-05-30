@@ -34,6 +34,10 @@ const CONFIG = {
 	"cost":1
 };
 
+const CONST = {
+	msPerDay : 24 * 60 * 60 * 1000
+};
+
 
 const DATACENTERS = {
 	"Europe": {
@@ -65,8 +69,8 @@ class PopRegion{
 		let lat = (this.bound['n'] + this.bound['s']) / 2;
 		let lng = (this.bound['e'] + this.bound['w']) / 2;
 		this.center = [lng,lat];
-		this.lat = lat;
-		this.lng = lng;
+		this.center.lat = lat;
+		this.center.lng = lng;
 
 		self.population = 0;
 		self.area = 0;
@@ -133,21 +137,18 @@ class PopRegion{
 		let timezone = this.timezone;
 		let localRotationalTime = moment(sym_time)
 			.add(timezone,'hours')
-			.year(0)
+			.year(1970)
 			.month(0)
-			.day(0)
+			.date(1)
 			.valueOf()
 			;
-		localRotationalTime /= (24 * 60 * 60 * 1000);
+		localRotationalTime /= CONST.msPerDay;
 		let lower = 1;
 		let upper = this.population;
-		let mode = localRotationalTime * this.population;
+		let mode = localRotationalTime * (upper-lower);
 
-		active.people = Helpers.random.rotating(lower,upper,mode);
+		active.people = Helpers.random.solar(lower,upper,mode);
 		active.people = Math.floor(active.people);
-		if(active.people < 1){
-			active.people = 1;
-		}
 
 		active.customers = active.people / this.population;
 		active.customers *= this.customers;
@@ -347,6 +348,36 @@ const Helpers = {
 
 	random: {
 		/**
+		 *
+		 *
+		 */
+		solar:function(low=0,high=1,mode=0.5,randFunc=Math.random){
+			if(mode === null){
+				mode = (low+high)/2;
+			}
+			if(mode > high) mode = high;
+			if(mode < low ) mode = low;
+
+			let mRatio = (mode-low) / (high-low);
+			let target = 1 - (Math.cos(mRatio*2*Math.PI)+1);
+
+			let rand = Helpers.random.rotating(0,1,target,randFunc);
+
+			rand = rand * (high-low) + low;
+			return rand;
+		},
+		rotate:function(point,mode){
+			if(mode > 1) mode = 1;
+			if(mode < 0 ) mode = 0;
+
+			let displacement = mode - 0.5 + 1;
+
+			point += displacement;
+			point -= Math.floor(point);
+
+			return point;
+		},
+		/**
 		 * Calculates the
 		 */
 		rotating:function(low=0, high=1, mode=null, randFunc=Math.random){
@@ -375,7 +406,7 @@ const Helpers = {
 			if(mode > high) mode = high;
 			if(mode < low ) mode = low;
 
-			let nums = Array(3).fill(null).map(function(){return randFunc();});
+			let nums = Array(3).fill(null).map(()=>{return randFunc();});
 			let rand = nums.reduce((a,d)=>{return a+d;},0) / nums.length;
 
 			let range = null;
