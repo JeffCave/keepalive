@@ -250,10 +250,11 @@ class PopComplete{
 	calcActive(sym_time = this.gameTime){
 		let active = this.regions.reduce(function(a,region){
 			let active = region.calcActive(sym_time);
+			a.regions.push(active);
 			a.people += active.people;
 			a.customers += active.customers;
 			return a;
-		},{people:0,customers:0});
+		},{people:0,customers:0,regions:[]});
 		return active;
 	}
 
@@ -470,19 +471,18 @@ class Main{
 			console.warn("already running");
 			return;
 		}
-		let self = this;
-		self.state = "run";
+		this.state = "run";
 		this.runner = setInterval(()=>{
-			if(self.state !== 'run'){
-				clearInterval(self.runner);
-				self.runner = null;
+			if(this.state !== 'run'){
+				clearInterval(this.runner);
+				this.runner = null;
 				return;
 			}
 			// Update the simulation time
-			let now = self.planet.gameTime;
-			let active = self.planet.calcActive(now);
-			active.peopleRatio = active.people / self.planet.population;
-			active.customerRatio = active.customers / self.planet.population;
+			let now = this.planet.gameTime;
+			let active = this.planet.calcActive(now);
+			active.peopleRatio = active.people / this.planet.population;
+			active.customerRatio = active.customers / this.planet.population;
 
 
 
@@ -490,7 +490,7 @@ class Main{
 				"[{{time}}] {{active}} of {{pop}} ({{pct}}%) \r"
 					.replace('{{time}}',now.toISOString().substring(0,19))
 					.replace('{{active}}', active.customers.toFixed(0))
-					.replace('{{pop}}', self.planet.population.toFixed(0))
+					.replace('{{pop}}', this.planet.population.toFixed(0))
 					.replace('{{pct}}', (active.customerRatio*100).toFixed(1))
 			);
 		},500);
