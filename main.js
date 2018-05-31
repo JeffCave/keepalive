@@ -28,15 +28,22 @@ const CONFIG = {
 	"path": "game",
 	"customers": 10,
 	"planetregions": {"lat": 10, "lng": 10},
-	// speed at which game times should accelerate beyond real-time.
+	// rate at which game times should accelerate beyond real-time.
 	"timeRate": 61,
-	"income":0.01,
-	"cost":1
+	"tickSize": 500,
+	// Income we earn from a given person per month
+	"income":1,
+	// Cost of a server per month
+	"cost":30
 };
 
-const CONST = {
-	msPerDay : 24 * 60 * 60 * 1000
-};
+
+const millisPer = {};
+millisPer.Day = 24 * 60 * 60 * 1000;
+millisPer.Year = millisPer.Day * 365.25;
+millisPer.Week = millisPer.Year / 52;
+millisPer.Month = millisPer.Year / 12;
+//millisPer = Object.seal(millisPer);
 
 
 const DATACENTERS = {
@@ -142,7 +149,7 @@ class PopRegion{
 			.date(1)
 			.valueOf()
 			;
-		localRotationalTime /= CONST.msPerDay;
+		localRotationalTime /= millisPer.Day;
 		let lower = 1;
 		let upper = this.population;
 		let mode = localRotationalTime * (upper-lower);
@@ -318,7 +325,7 @@ class Providers{
 		this.datacenters.forEach(center=>{
 			center.capacity = 1000;
 			center.max = 100;
-			center.cost = CONFIG.cost;
+			center.price = CONFIG.cost;
 			center.active = false;
 		});
 
@@ -328,7 +335,7 @@ class Providers{
 			center.capacity = 1000;
 			// there is no end to their servers
 			center.max = Number.MAX_SAFE_INTEGER;
-			center.cost = CONFIG.cost;
+			center.price = CONFIG.cost;
 			center.active = true;
 		});
 
@@ -338,7 +345,7 @@ class Providers{
 		// next tier
 		this.home.capacity = 100;
 		this.max = 1;
-		this.cost = 0;
+		this.price = 0;
 		this.active = true;
 	}
 
@@ -440,6 +447,18 @@ const Helpers = {
 			}
 			return sample;
 		}
+	},
+	/**
+	 * Calculates the distance between the two points on the earth surface
+	 *
+	 * TODO: actually base it on circular distance
+	 * https://en.wikipedia.org/wiki/Great-circle_distance
+	 */
+	GreatDist:function(a,b){
+		let lng = Math.abs(b[0] - a[0])**2;
+		let lat = Math.abs(b[1] - a[1])**2;
+		let dist = (lng+lat)**0.5;
+		return dist;
 	}
 };
 
@@ -462,7 +481,11 @@ class Main{
 		this.providers = new Providers(this.planet);
 		this.now = self.planet.gameTime;
 		this.inc = config["timeIncrement"];
+		this.account = 10;
+		this.income = config.income / this.timeScale;
 
+		this.timeScale = (config.tickSize*config.timeRate);
+		this.tickFreq = config.tickSize;
 		this.state = 'stop';
 	}
 
@@ -484,6 +507,70 @@ class Main{
 			active.peopleRatio = active.people / this.planet.population;
 			active.customerRatio = active.customers / this.planet.population;
 
+			let providers = this.providers.datacenters
+				.filter(center=>{
+					return center.active;
+				})
+				.reduce((a,d)=>{
+					a[d.name] = d;
+					return a;
+				},{})
+				;
+
+
+
+			// STEP 1: Configure servers as per config files
+			let state = this.customerConfig;
+			state.hosts = state.order.map(host=>{
+				// find the provider
+				let provider = providers[host.provider];
+				if(!provider || !provider.active){
+					return null;
+				}
+				// provisioned
+				let prov = JSON.clone(provider);
+				prov.provider = host.provider;
+				prov.quantity = Math.min(host.quantity,provider.max);
+				prov.cost = prov.quantity * prov.price;
+				prov.capacity = provider.capacity * prov.quantity;
+				return prov;
+			})
+			.filter(host=>{
+				return (!!host);
+			})
+			;
+
+			// STEP 2: Pre-pay all your hosting bills
+			state.hosts.forEach(host=>{
+				host.paid = Math.min(host.cost,this.account);
+				this.account -= host.paid;
+			});
+
+			// STEP 3: allocate services to active users
+			/*
+			active.regions.forEach(region=>{
+				region.unallocated = region.customers;
+			});
+			state.hosts.forEach(host=>{
+				host.unallocated = region.customers;
+			});
+			active.customers.forEach((customer)=>{
+				let hosts = state.hosts.sort((a,b)=>{
+					let aDist = Helpers.GreatDist(host,a);
+					let bDist = Helpers.GreatDist(host,b);
+					return bDist - aDist;
+				});
+
+			});
+			*/
+
+			// STEP 4: Apply catastrophies: bill went negative? earthquake?
+			// STEP 5: calculate the distribution of happy, mediocre, and unhappy
+			// users will be happy across a normal distribution, the real trick is
+			// to move the modal value to the right (increasing the number happy people)
+			// The number of people that were supported by a host that experienced
+			// catastrophe are instantly (100%) disatisfied
+
 
 
 			console.write.out(
@@ -493,7 +580,19 @@ class Main{
 					.replace('{{pop}}', this.planet.population.toFixed(0))
 					.replace('{{pct}}', (active.customerRatio*100).toFixed(1))
 			);
-		},500);
+		},this.tickFreq);
+	}
+
+	get customerConfig(){
+		let rtn = {
+			'order':[
+					{
+						provider:"Mom's Basement",
+						quantity:1
+					}
+				]
+		};
+		return rtn;
 	}
 
 	help(){
