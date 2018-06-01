@@ -344,9 +344,9 @@ class Providers{
 		// its capacity should be just enough that you can almost acquire the
 		// next tier
 		this.home.capacity = 100;
-		this.max = 1;
-		this.price = 0;
-		this.active = true;
+		this.home.max = 1;
+		this.home.price = 0;
+		this.home.active = true;
 	}
 
 }
@@ -470,16 +470,14 @@ const Helpers = {
 class Main{
 
 	constructor(config){
-		let self = this;
-
-		self.gamedir = config["path"];
-		if (!path.isAbsolute(self.gamedir)){
-			self.gamedir = path.join('.', self.gamedir);
+		this.gamedir = config["path"];
+		if (!path.isAbsolute(this.gamedir)){
+			this.gamedir = path.join('.', this.gamedir);
 		}
 
 		this.planet = new PopComplete(config["customers"], config["planetregions"]);
 		this.providers = new Providers(this.planet);
-		this.now = self.planet.gameTime;
+		this.now = this.planet.gameTime;
 		this.inc = config["timeIncrement"];
 		this.account = 10;
 		this.income = config.income / this.timeScale;
@@ -521,6 +519,7 @@ class Main{
 
 			// STEP 1: Configure servers as per config files
 			let state = this.customerConfig;
+			state.active = active;
 			state.hosts = state.order.map(host=>{
 				// find the provider
 				let provider = providers[host.provider];
@@ -533,6 +532,7 @@ class Main{
 				prov.quantity = Math.min(host.quantity,provider.max);
 				prov.cost = prov.quantity * prov.price;
 				prov.capacity = provider.capacity * prov.quantity;
+				prov.unallocated = prov.capacity;
 				return prov;
 			})
 			.filter(host=>{
@@ -547,30 +547,30 @@ class Main{
 			});
 
 			// STEP 3: allocate services to active users
-			/*
-			active.regions.forEach(region=>{
-				region.unallocated = region.customers;
-			});
-			state.hosts.forEach(host=>{
-				host.unallocated = region.customers;
-			});
-			active.customers.forEach((customer)=>{
-				let hosts = state.hosts.sort((a,b)=>{
-					let aDist = Helpers.GreatDist(host,a);
-					let bDist = Helpers.GreatDist(host,b);
-					return bDist - aDist;
-				});
-
-			});
-			*/
+			this.allocateUsersToHosts(state);
 
 			// STEP 4: Apply catastrophies: bill went negative? earthquake?
+			state.hosts
+				.filter(host=>{
+					return host.paid !== host.price;
+				})
+				.forEach(host=>{
+					state.allocationMap.filter(map=>{
+						map.host = null;
+					});
+				})
+				;
+			
 			// STEP 5: calculate the distribution of happy, mediocre, and unhappy
 			// users will be happy across a normal distribution, the real trick is
 			// to move the modal value to the right (increasing the number happy people)
 			// The number of people that were supported by a host that experienced
 			// catastrophe are instantly (100%) disatisfied
-
+			state.allocationMap.forEach((cust)=>{
+				let satisfaction = (cust.dist / 1) - 0.5;
+				let newCustomers = satisfaction * cust.count;
+				cust.region.customers += newCustomers;
+			});
 
 
 			console.write.out(
@@ -593,6 +593,52 @@ class Main{
 				]
 		};
 		return rtn;
+	}
+	
+	/**
+	 * Performes a mapping between users and hosts, then routes customers
+	 * to an appropriate host.
+	 */
+	allocateUsersToHosts(state){
+		let hosts = state.hosts;
+		state.allocationMap = [];
+		state.active.regions.forEach(region=>{
+			if(region.customers === 0){
+				return;
+			}
+			region.unallocated = region.customers;
+			hosts.sort((a,b)=>{
+				let aDist = Helpers.GreatDist(region.coords,a.coords);
+				let bDist = Helpers.GreatDist(region.coords,b.coords);
+				return bDist - aDist;
+			});
+			while(hosts.length > 0 && region.unallocated > 0){
+				let host = hosts[0];
+				if(host.unallocated > 0){
+					let allocate = Math.min(host.unallocated,region.unallocated);
+					host.unallocated -= allocate;
+					region.unallocated -= allocate;
+					state.allocationMap.push({
+						region: region,
+						host:host,
+						count:allocate,
+						dist:Helpers.GreatDist(region.coords,host.coords),
+					});
+				}
+				if(host.unallocated == 0){
+					hosts.pop();
+				}
+			}
+			if(region.unallocated > 0){
+				state.allocationMap.push({
+					region: region,
+					host:null,
+					count:region.unallocated,
+					dist:Helpers.GreatDist([-180,-90],[180,90]),
+				});
+			}
+		});
+
 	}
 
 	help(){
